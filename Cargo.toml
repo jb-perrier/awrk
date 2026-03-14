@@ -1,0 +1,26 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/datex/datex",
+    "crates/schema/schema",
+    "crates/schema/macros",
+    "crates/datex/rpc",
+    "crates/datex/viz",
+    "crates/datex/macros",
+    "crates/world",
+    "crates/world-ecs",
+    "crates/core",
+    "crates/explorer-ui",
+    "examples/example-model",
+    "examples/example-server",
+    "examples/example-consumer",
+    "crates/macros",
+    "crates/win/api",
+    "crates/win/server",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["Jean-Baptiste Perrier"]
+license = "MIT OR Apache-2.0"

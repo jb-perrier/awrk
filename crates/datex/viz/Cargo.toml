@@ -1,0 +1,11 @@
+[package]
+name = "awrk-datex-viz"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+awrk-datex = { path = "../datex" }
+serde_json = "1"
+base64 = "0.22"

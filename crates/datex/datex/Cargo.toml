@@ -1,0 +1,12 @@
+[package]
+name = "awrk-datex"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+awrk-datex-macros = { path = "../macros" }
+awrk-datex-schema = { path = "../../schema/schema" }
+
+[dev-dependencies]

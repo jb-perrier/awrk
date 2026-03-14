@@ -1,0 +1,8 @@
+target/
+tmp/
+
+.serena/
+.vscode/
+
+.DS_Store
+Thumbs.db

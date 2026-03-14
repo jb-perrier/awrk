@@ -1,0 +1,19 @@
+[package]
+name = "awrk-win-server"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+env_logger = "0.11.8"
+log = "0.4.29"
+mimalloc = "0.1"
+winit = "0.30.0"
+awrk-world-ecs = { path = "../../world-ecs" }
+awrk-world = { path = "../../world" }
+awrk-win-api = { path = "../api" }
+awrk-datex = { path = "../../datex/datex" }
+awrk-datex-macros = { path = "../../datex/macros" }
+awrk-datex-schema = { path = "../../schema/schema" }
+awrk-schema-macros = { path = "../../schema/macros" }

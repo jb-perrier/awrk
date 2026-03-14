@@ -1,0 +1,13 @@
+[package]
+name = "awrk-example-model"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+awrk-world = { path = "../../crates/world" }
+awrk-macros = { path = "../../crates/macros" }
+awrk-datex = { path = "../../crates/datex/datex" }
+awrk-datex-schema = { path = "../../crates/schema/schema" }
+awrk-schema-macros = { path = "../../crates/schema/macros" }

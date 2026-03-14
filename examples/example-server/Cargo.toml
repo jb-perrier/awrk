@@ -1,0 +1,14 @@
+[package]
+name = "awrk-example-server"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+env_logger = "0.11.8"
+log = "0.4.29"
+mimalloc = "0.1"
+awrk-example-model = { path = "../example-model" }
+awrk-world = { path = "../../crates/world" }
+awrk-world-ecs = { path = "../../crates/world-ecs" }

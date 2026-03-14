@@ -1,0 +1,13 @@
+[package]
+name = "awrk-win-api"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+awrk-world = { path = "../../world" }
+awrk-macros = { path = "../../macros" }
+awrk-datex = { path = "../../datex/datex" }
+awrk-datex-schema = { path = "../../schema/schema" }
+awrk-schema-macros = { path = "../../schema/macros" }

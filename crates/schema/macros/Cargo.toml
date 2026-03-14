@@ -1,0 +1,19 @@
+[package]
+name = "awrk-schema-macros"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }
+
+awrk-datex-schema = { path = "../schema" }
+
+[dev-dependencies]
+awrk-datex = { path = "../../datex/datex" }

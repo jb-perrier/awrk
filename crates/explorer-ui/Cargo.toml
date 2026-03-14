@@ -1,0 +1,16 @@
+[package]
+name = "awrk-explorer-ui"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+eframe = "0.30.0"
+env_logger = "0.11.8"
+log = "0.4.29"
+mimalloc = "0.1"
+awrk-world-ecs = { path = "../world-ecs" }
+awrk-world = { path = "../world" }
+awrk-datex = { path = "../datex/datex" }
+awrk-datex-schema = { path = "../schema/schema" }
