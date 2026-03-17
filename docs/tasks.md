@@ -1,0 +1,1 @@
+- [ ] Move process logic from win-process-bin to win-process (lib), should only be a bin win-process-bin
