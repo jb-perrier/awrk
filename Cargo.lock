@@ -516,19 +516,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "awrk-example-consumer"
-version = "0.1.0"
-dependencies = [
- "awrk-example-model",
- "awrk-world",
- "awrk-world-ecs",
- "env_logger",
- "log",
- "mimalloc",
-]
-
-[[package]]
-name = "awrk-example-model"
+name = "awrk-example"
 version = "0.1.0"
 dependencies = [
  "awrk-datex",
@@ -539,10 +527,31 @@ dependencies = [
 ]
 
 [[package]]
-name = "awrk-example-server"
+name = "awrk-example-consumer"
 version = "0.1.0"
 dependencies = [
- "awrk-example-model",
+ "awrk-example",
+ "awrk-world",
+ "awrk-world-ecs",
+ "env_logger",
+ "log",
+ "mimalloc",
+]
+
+[[package]]
+name = "awrk-example-process"
+version = "0.1.0"
+dependencies = [
+ "awrk-example",
+ "awrk-world",
+]
+
+[[package]]
+name = "awrk-example-process-bin"
+version = "0.1.0"
+dependencies = [
+ "awrk-example",
+ "awrk-example-process",
  "awrk-world",
  "awrk-world-ecs",
  "env_logger",
@@ -585,7 +594,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "awrk-win-api"
+name = "awrk-win"
 version = "0.1.0"
 dependencies = [
  "awrk-datex",
@@ -596,14 +605,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "awrk-win-server"
+name = "awrk-win-process"
 version = "0.1.0"
 dependencies = [
- "awrk-datex",
- "awrk-datex-macros",
- "awrk-datex-schema",
- "awrk-schema-macros",
- "awrk-win-api",
+ "awrk-win",
+ "awrk-world",
+]
+
+[[package]]
+name = "awrk-win-process-bin"
+version = "0.1.0"
+dependencies = [
+ "awrk-win",
+ "awrk-win-process",
  "awrk-world",
  "awrk-world-ecs",
  "env_logger",

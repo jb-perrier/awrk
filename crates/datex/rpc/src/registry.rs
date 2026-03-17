@@ -22,11 +22,13 @@ type HandlerWithCtx<C> = Box<
 pub struct RpcRegistry {
     schema: awrk_datex_schema::SchemaBuilder,
     handlers: BTreeMap<RpcProcId, Handler>,
+    proc_names: BTreeMap<RpcProcId, String>,
 }
 
 pub struct RpcRegistryWithCtx<C> {
     schema: awrk_datex_schema::SchemaBuilder,
     handlers: BTreeMap<RpcProcId, HandlerWithCtx<C>>,
+    proc_names: BTreeMap<RpcProcId, String>,
 }
 
 impl RpcRegistry {
@@ -34,6 +36,7 @@ impl RpcRegistry {
         let mut this = Self {
             schema: awrk_datex_schema::SchemaBuilder::new(),
             handlers: BTreeMap::new(),
+            proc_names: BTreeMap::new(),
         };
         this.register_builtin_get_schema();
         this
@@ -53,11 +56,14 @@ impl RpcRegistry {
         R: Encode + awrk_datex_schema::Schema,
         F: Fn(A) -> std::result::Result<R, String> + Send + Sync + 'static,
     {
+        let proc_id = RpcProcId(awrk_datex_schema::proc_id(name).0);
+        self.ensure_proc_name_available(proc_id, name);
+
         let args_type = <A as awrk_datex_schema::Schema>::wire_schema(&mut self.schema);
         let result_type = <R as awrk_datex_schema::Schema>::wire_schema(&mut self.schema);
         self.schema.register_proc(name, args_type, result_type);
 
-        let proc_id = RpcProcId(awrk_datex_schema::proc_id(name).0);
+        self.proc_names.insert(proc_id, name.to_string());
 
         self.handlers.insert(
             proc_id,
@@ -144,6 +150,10 @@ impl RpcRegistry {
         schema.encode().map_err(|e| format!("{e}"))
     }
 
+    pub fn schema_snapshot(&self) -> std::result::Result<awrk_datex_schema::OwnedSchema, String> {
+        self.schema.build_clone()
+    }
+
     fn register_builtin_get_schema(&mut self) {
         let args_type = <() as awrk_datex_schema::Schema>::wire_schema(&mut self.schema);
         let result_type = <Vec<u8> as awrk_datex_schema::Schema>::wire_schema(&mut self.schema);
@@ -154,6 +164,19 @@ impl RpcRegistry {
             args_type,
             result_type,
         );
+        self.proc_names.insert(
+            RpcProcId(awrk_datex_schema::PROC_ID_GET_SCHEMA.0),
+            "awrk.get_schema".to_string(),
+        );
+    }
+
+    fn ensure_proc_name_available(&self, proc_id: RpcProcId, name: &str) {
+        if let Some(existing) = self.proc_names.get(&proc_id) {
+            assert!(
+                existing == name,
+                "duplicate RPC procedure id for {name}: already registered as {existing}"
+            );
+        }
     }
 }
 
@@ -162,6 +185,7 @@ impl<C> RpcRegistryWithCtx<C> {
         let mut this = Self {
             schema: awrk_datex_schema::SchemaBuilder::new(),
             handlers: BTreeMap::new(),
+            proc_names: BTreeMap::new(),
         };
         this.register_builtin_get_schema();
         this
@@ -181,11 +205,14 @@ impl<C> RpcRegistryWithCtx<C> {
         R: Encode + awrk_datex_schema::Schema,
         F: Fn(&mut C, A) -> std::result::Result<R, String> + Send + Sync + 'static,
     {
+        let proc_id = RpcProcId(awrk_datex_schema::proc_id(name).0);
+        self.ensure_proc_name_available(proc_id, name);
+
         let args_type = <A as awrk_datex_schema::Schema>::wire_schema(&mut self.schema);
         let result_type = <R as awrk_datex_schema::Schema>::wire_schema(&mut self.schema);
         self.schema.register_proc(name, args_type, result_type);
 
-        let proc_id = RpcProcId(awrk_datex_schema::proc_id(name).0);
+        self.proc_names.insert(proc_id, name.to_string());
 
         self.handlers.insert(
             proc_id,
@@ -275,6 +302,10 @@ impl<C> RpcRegistryWithCtx<C> {
         schema.encode().map_err(|e| format!("{e}"))
     }
 
+    pub fn schema_snapshot(&self) -> std::result::Result<awrk_datex_schema::OwnedSchema, String> {
+        self.schema.build_clone()
+    }
+
     fn register_builtin_get_schema(&mut self) {
         let args_type = <() as awrk_datex_schema::Schema>::wire_schema(&mut self.schema);
         let result_type = <Vec<u8> as awrk_datex_schema::Schema>::wire_schema(&mut self.schema);
@@ -285,5 +316,18 @@ impl<C> RpcRegistryWithCtx<C> {
             args_type,
             result_type,
         );
+        self.proc_names.insert(
+            RpcProcId(awrk_datex_schema::PROC_ID_GET_SCHEMA.0),
+            "awrk.get_schema".to_string(),
+        );
+    }
+
+    fn ensure_proc_name_available(&self, proc_id: RpcProcId, name: &str) {
+        if let Some(existing) = self.proc_names.get(&proc_id) {
+            assert!(
+                existing == name,
+                "duplicate RPC procedure id for {name}: already registered as {existing}"
+            );
+        }
     }
 }

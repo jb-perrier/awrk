@@ -1,17 +1,18 @@
-use crate::bridge::{WorldBridge, WorldBridgeRemoteConfig};
 use crate::core::changes::ChangeLog;
 use crate::core::type_registry::WorldTypeRegistry;
-use crate::rpc::{EntityInfo, EntityMeta, register_builtin_rpcs};
-use crate::transport::{Session, SessionListener, WORLD_MAX_FRAME_SIZE};
-use crate::{
-    Name, Parent, ProxyAuthority, ProxyAuthorityKind, ProxyEntity, ProxyLifecycle, ProxySpawnError,
-    ProxySpawnRequest, ProxyState, RemoteParentRef, RemoteRef, WorldId,
+use crate::rpc::{
+    EntityInfo, EntityMeta, FieldInfo, ListProceduresResult, ProcInfo, Rpc, TupleItemInfo,
+    TypeKind, register_builtin_rpcs,
 };
+use crate::transport::{Session, SessionListener, WORLD_MAX_FRAME_SIZE};
+use crate::{Name, Parent};
 use awrk_datex::codec::decode::DecodeConfig;
 use awrk_datex::codec::encode::EncodeConfig;
 use awrk_datex_rpc::{RpcRegistryWithCtx, decode_envelope};
 use clap::Parser;
 use hecs::Fetch;
+use std::any::{Any, TypeId};
+use std::collections::HashMap;
 
 fn entity_parent_bits(world: &hecs::World, entity: hecs::Entity) -> Option<u64> {
     world.get::<&Parent>(entity).ok().map(|p| p.parent)
@@ -337,17 +338,6 @@ impl World {
     }
 }
 
-#[derive(Default)]
-pub struct Remotes {
-    pub(crate) bridge: WorldBridge,
-}
-
-impl Remotes {
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
 pub struct Rpcs {
     pub(crate) registry: Option<RpcRegistryWithCtx<World>>,
 }
@@ -365,8 +355,62 @@ impl Rpcs {
         }
     }
 
+    fn registry(&self) -> &RpcRegistryWithCtx<World> {
+        self.registry.as_ref().expect("rpcs taken")
+    }
+
     fn registry_mut(&mut self) -> &mut RpcRegistryWithCtx<World> {
         self.registry.as_mut().expect("rpcs taken")
+    }
+
+    pub fn register_typed<A, R, F>(&mut self, name: &str, f: F) -> awrk_datex_rpc::RpcProcId
+    where
+        for<'a> A: awrk_datex::Decode<'a> + awrk_datex_schema::Schema,
+        R: awrk_datex::Encode + awrk_datex_schema::Schema,
+        F: Fn(&mut World, A) -> Result<R, String> + Send + Sync + 'static,
+    {
+        self.registry_mut().register_typed::<A, R, F>(name, f)
+    }
+
+    pub fn register_type<T: awrk_datex_schema::Schema>(&mut self) -> awrk_datex_schema::TypeId {
+        self.registry_mut().register_type::<T>()
+    }
+
+    pub fn schema_snapshot(&self) -> Result<awrk_datex_schema::OwnedSchema, String> {
+        self.registry().schema_snapshot()
+    }
+
+    pub fn list_procedures(&self) -> Result<ListProceduresResult, String> {
+        list_procedures_from_schema(&self.schema_snapshot()?)
+    }
+}
+
+#[derive(Default)]
+pub struct Resources {
+    values: HashMap<TypeId, Box<dyn Any>>,
+}
+
+impl Resources {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn insert<T: 'static>(&mut self, value: T) -> Option<T> {
+        self.values
+            .insert(TypeId::of::<T>(), Box::new(value))
+            .and_then(|previous| previous.downcast::<T>().ok().map(|value| *value))
+    }
+
+    pub fn get<T: 'static>(&self) -> Option<&T> {
+        self.values
+            .get(&TypeId::of::<T>())
+            .and_then(|value| value.downcast_ref::<T>())
+    }
+
+    pub fn get_mut<T: 'static>(&mut self) -> Option<&mut T> {
+        self.values
+            .get_mut(&TypeId::of::<T>())
+            .and_then(|value| value.downcast_mut::<T>())
     }
 }
 
@@ -547,9 +591,9 @@ impl Sessions {
 pub struct ProcessParts {
     pub name: String,
     pub world: World,
-    pub remotes: Remotes,
     pub rpcs: Rpcs,
     pub sessions: Sessions,
+    pub resources: Resources,
 }
 
 impl Default for ProcessParts {
@@ -563,9 +607,9 @@ impl ProcessParts {
         Self {
             name: process_name.into(),
             world: World::new(),
-            remotes: Remotes::new(),
             rpcs: Rpcs::new(),
             sessions: Sessions::new(),
+            resources: Resources::new(),
         }
     }
 
@@ -578,9 +622,9 @@ impl ProcessParts {
 pub struct Process {
     name: String,
     world: World,
-    remotes: Remotes,
     rpcs: Rpcs,
     sessions: Sessions,
+    resources: Resources,
 }
 
 impl Process {
@@ -588,14 +632,16 @@ impl Process {
         let mut process = Self {
             name: process_name.into(),
             world: World::new(),
-            remotes: Remotes::new(),
             rpcs: Rpcs::new(),
             sessions: Sessions::new(),
+            resources: Resources::new(),
         };
 
         process.register_builtin_types();
         register_builtin_rpcs(&mut process);
-        crate::registration::register_discovered(&mut process);
+        crate::registration::register_discovered_types(&mut process);
+        process.register_list_procedures_builtin();
+        process.validate_runtime_schema();
         process
     }
 
@@ -621,47 +667,82 @@ impl Process {
         ProcessParts {
             name: self.name,
             world: self.world,
-            remotes: self.remotes,
             rpcs: self.rpcs,
             sessions: self.sessions,
+            resources: self.resources,
         }
     }
 
     pub(crate) fn register_builtin_types(&mut self) {
         let _ = self.register_component::<Name>();
         let _ = self.register_component::<Parent>();
-        let _ = self.register_component::<WorldId>();
-        let _ = self.register_type::<RemoteRef>();
-        let _ = self.register_type::<ProxyLifecycle>();
-        let _ = self.register_type::<ProxyAuthorityKind>();
-        let _ = self.register_component::<ProxyEntity>();
-        let _ = self.register_component::<ProxyState>();
-        let _ = self.register_component::<ProxyAuthority>();
-        let _ = self.register_component::<ProxySpawnRequest>();
-        let _ = self.register_component::<ProxySpawnError>();
-        let _ = self.register_component::<RemoteParentRef>();
     }
 
     pub fn tick(&mut self) -> Result<(), String> {
         self.sessions.handle(&mut self.world, &mut self.rpcs);
-        self.remotes.tick_all(&mut self.world)
+        Ok(())
     }
 
-    fn rpcs_mut(&mut self) -> &mut RpcRegistryWithCtx<World> {
-        self.rpcs.registry_mut()
+    pub fn world(&self) -> &World {
+        &self.world
     }
 
-    pub(crate) fn register_rpc_typed<A, R, F>(
-        &mut self,
-        name: &str,
-        f: F,
-    ) -> awrk_datex_rpc::RpcProcId
+    pub fn world_mut(&mut self) -> &mut World {
+        &mut self.world
+    }
+
+    pub fn rpcs(&self) -> &Rpcs {
+        &self.rpcs
+    }
+
+    pub fn rpcs_mut(&mut self) -> &mut Rpcs {
+        &mut self.rpcs
+    }
+
+    pub fn sessions(&self) -> &Sessions {
+        &self.sessions
+    }
+
+    pub fn sessions_mut(&mut self) -> &mut Sessions {
+        &mut self.sessions
+    }
+
+    pub fn resources(&self) -> &Resources {
+        &self.resources
+    }
+
+    pub fn resources_mut(&mut self) -> &mut Resources {
+        &mut self.resources
+    }
+
+    pub fn resource<T: 'static>(&self) -> Result<&T, String> {
+        self.resources
+            .get::<T>()
+            .ok_or_else(|| format!("missing resource: {}", core::any::type_name::<T>()))
+    }
+
+    pub fn resource_mut<T: 'static>(&mut self) -> Result<&mut T, String> {
+        self.resources
+            .get_mut::<T>()
+            .ok_or_else(|| format!("missing resource: {}", core::any::type_name::<T>()))
+    }
+
+    pub fn register_rpc_typed<A, R, F>(&mut self, name: &str, f: F) -> awrk_datex_rpc::RpcProcId
     where
         for<'a> A: awrk_datex::Decode<'a> + awrk_datex_schema::Schema,
         R: awrk_datex::Encode + awrk_datex_schema::Schema,
         F: Fn(&mut World, A) -> Result<R, String> + Send + Sync + 'static,
     {
-        self.rpcs_mut().register_typed::<A, R, F>(name, f)
+        self.rpcs.register_typed::<A, R, F>(name, f)
+    }
+
+    pub fn register_rpc<A, R, F>(&mut self, rpc: Rpc<A, R>, f: F) -> awrk_datex_rpc::RpcProcId
+    where
+        for<'a> A: awrk_datex::Decode<'a> + awrk_datex_schema::Schema,
+        R: awrk_datex::Encode + awrk_datex_schema::Schema,
+        F: Fn(&mut World, A) -> Result<R, String> + Send + Sync + 'static,
+    {
+        self.register_rpc_typed::<A, R, F>(rpc.name(), f)
     }
 
     pub fn register_type<T>(&mut self) -> awrk_datex_schema::TypeId
@@ -738,44 +819,105 @@ impl Process {
     pub fn name(&self) -> &str {
         &self.name
     }
+
+    fn register_list_procedures_builtin(&mut self) {
+        self.register_rpc_typed::<(), ListProceduresResult, _>(
+            "awrk.list_procedures",
+            |_world, _| Ok(ListProceduresResult { procs: Vec::new() }),
+        );
+
+        let procedures = self
+            .rpcs
+            .list_procedures()
+            .unwrap_or_else(|error| panic!("invalid RPC procedure registration: {error}"));
+
+        self.register_rpc_typed::<(), ListProceduresResult, _>(
+            "awrk.list_procedures",
+            move |_world, _| Ok(procedures.clone()),
+        );
+    }
+
+    fn validate_runtime_schema(&self) {
+        self.rpcs
+            .schema_snapshot()
+            .unwrap_or_else(|error| panic!("invalid RPC registration: {error}"));
+    }
 }
 
-impl Remotes {
-    pub fn add_remote(&mut self, config: WorldBridgeRemoteConfig) -> Result<(), String> {
-        self.bridge.add_remote(config)
+fn list_procedures_from_schema(
+    schema: &awrk_datex_schema::OwnedSchema,
+) -> Result<ListProceduresResult, String> {
+    let mut procs = Vec::with_capacity(schema.procedures.len());
+
+    for proc_def in schema.procedures.values() {
+        let name = schema
+            .string(proc_def.name)
+            .ok_or_else(|| format!("missing procedure name for proc id"))?;
+        procs.push(ProcInfo {
+            name: name.to_string(),
+            args: schema_type_kind(schema, proc_def.args_type)?,
+            result: schema_type_kind(schema, proc_def.result_type)?,
+        });
     }
 
-    pub fn remove_remote(
-        &mut self,
-        world: &mut World,
-        world_id: u64,
-        despawn_local_proxies: bool,
-    ) -> Result<(), String> {
-        let mut bridge = std::mem::take(&mut self.bridge);
-        let result = bridge.remove_remote(world, world_id, despawn_local_proxies);
-        self.bridge = bridge;
-        result
-    }
+    procs.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(ListProceduresResult { procs })
+}
 
-    pub fn clear(&mut self, world: &mut World, despawn_local_proxies: bool) -> Result<(), String> {
-        let mut bridge = std::mem::take(&mut self.bridge);
-        let result = bridge.clear(world, despawn_local_proxies);
-        self.bridge = bridge;
-        result
-    }
+fn schema_type_kind(
+    schema: &awrk_datex_schema::OwnedSchema,
+    type_id: awrk_datex_schema::TypeId,
+) -> Result<TypeKind, String> {
+    let type_def = schema
+        .types
+        .get(&type_id)
+        .ok_or_else(|| format!("missing schema type: {}", type_id.0))?;
 
-    pub fn tick_all(&mut self, world: &mut World) -> Result<(), String> {
-        let mut bridge = std::mem::take(&mut self.bridge);
-        let result = bridge.tick_all(world);
-        self.bridge = bridge;
-        result
+    match &type_def.kind {
+        awrk_datex_schema::TypeKind::Primitive {
+            prim: awrk_datex_schema::PrimitiveKind::Unit,
+        } => Ok(TypeKind::Unit),
+        awrk_datex_schema::TypeKind::Struct { fields } => {
+            let mut out = Vec::with_capacity(fields.len());
+            for field_id in fields {
+                let field = schema
+                    .fields
+                    .get(field_id)
+                    .ok_or_else(|| format!("missing schema field: {}", field_id.0))?;
+                let field_name = schema
+                    .string(field.name)
+                    .ok_or_else(|| format!("missing schema field name: {}", field.name.0))?;
+                out.push(FieldInfo {
+                    name: field_name.to_string(),
+                    type_name: schema_type_name(schema, field.type_id)?,
+                });
+            }
+            Ok(TypeKind::Struct(out))
+        }
+        awrk_datex_schema::TypeKind::Tuple { items } => {
+            let mut out = Vec::with_capacity(items.len());
+            for (index, item_id) in items.iter().enumerate() {
+                out.push(TupleItemInfo {
+                    index: index as u32,
+                    type_name: schema_type_name(schema, *item_id)?,
+                });
+            }
+            Ok(TypeKind::Tuple(out))
+        }
+        _ => Ok(TypeKind::Other(schema_type_name(schema, type_id)?)),
     }
+}
 
-    pub fn local_entity_for_remote(&self, remote_ref: RemoteRef) -> Option<u64> {
-        self.bridge.local_entity_for_remote(remote_ref)
-    }
-
-    pub fn remote_ref_for_local(&self, local_entity: u64) -> Option<RemoteRef> {
-        self.bridge.remote_ref_for_local(local_entity)
-    }
+fn schema_type_name(
+    schema: &awrk_datex_schema::OwnedSchema,
+    type_id: awrk_datex_schema::TypeId,
+) -> Result<String, String> {
+    let type_def = schema
+        .types
+        .get(&type_id)
+        .ok_or_else(|| format!("missing schema type: {}", type_id.0))?;
+    schema
+        .string(type_def.name)
+        .map(str::to_string)
+        .ok_or_else(|| format!("missing schema type name: {}", type_def.name.0))
 }

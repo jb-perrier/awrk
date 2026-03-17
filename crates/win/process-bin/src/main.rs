@@ -3,8 +3,9 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 use std::collections::HashMap;
 
-use awrk_win_api::{
-    WinFocused, WinInnerSize, WinStatus, WinTitle, WinWindow,
+use awrk_win::{
+    WinEventKind, WinFocused, WinInnerSize, WinStatus, WinTitle, WinWindow, WindowHandle,
+    record_window_event, window_info,
 };
 use awrk_world::core::{Process, ProcessParts, Rpcs, Sessions, World};
 use awrk_world_ecs::Name;
@@ -18,13 +19,15 @@ use winit::{
 
 pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
+    let mut process = Process::from_args("win-process");
+    awrk_win_process::rpc::register(&mut process);
     let ProcessParts {
         name,
         mut world,
         rpcs,
         mut sessions,
         ..
-    } = Process::from_args("win-server").into_parts();
+    } = process.into_parts();
     init(&mut world);
     sessions.start(&name)?;
     run(world, rpcs, sessions)?;
@@ -75,6 +78,12 @@ impl App {
         for entity in stale {
             if let Some(window) = self.windows_by_entity.remove(&entity) {
                 self.entity_by_window.remove(&window.id());
+                let _ = record_window_event(
+                    &mut self.world,
+                    WinEventKind::Closed {
+                        handle: WindowHandle::new(entity),
+                    },
+                );
             }
         }
 
@@ -83,7 +92,10 @@ impl App {
                 native.set_title(&window.title);
                 let current = native.inner_size();
                 if current.width != window.size.width || current.height != window.size.height {
-                    let _ = native.request_inner_size(PhysicalSize::new(window.size.width, window.size.height));
+                    let _ = native.request_inner_size(PhysicalSize::new(
+                        window.size.width,
+                        window.size.height,
+                    ));
                 }
 
                 if !matches!(window.status, Some(WinStatus::Ready)) {
@@ -106,12 +118,26 @@ impl App {
                     self.entity_by_window.insert(id, window.entity);
                     self.windows_by_entity.insert(window.entity, native);
                     let _ = set_window_status(&mut self.world, window.entity, WinStatus::Ready);
+                    let handle = WindowHandle::new(window.entity);
+                    if let Ok(info) = window_info(&mut self.world, handle) {
+                        let _ = record_window_event(
+                            &mut self.world,
+                            WinEventKind::Created { window: info },
+                        );
+                    }
                 }
                 Err(error) => {
                     let _ = set_window_status(
                         &mut self.world,
                         window.entity,
                         WinStatus::CreateFailed {
+                            message: error.to_string(),
+                        },
+                    );
+                    let _ = record_window_event(
+                        &mut self.world,
+                        WinEventKind::CreateFailed {
+                            handle: WindowHandle::new(window.entity),
                             message: error.to_string(),
                         },
                     );
@@ -127,6 +153,12 @@ impl App {
 
         match event {
             WindowEvent::CloseRequested => {
+                let _ = record_window_event(
+                    &mut self.world,
+                    WinEventKind::Closed {
+                        handle: WindowHandle::new(entity),
+                    },
+                );
                 self.entity_by_window.remove(&window_id);
                 self.windows_by_entity.remove(&entity);
                 let _ = self.world.despawn(entity);
@@ -136,11 +168,25 @@ impl App {
                 if let Ok(mut e) = self.world.entity_mut(entity) {
                     let _ = e.insert_one(inner_size.clone());
                 }
+                let _ = record_window_event(
+                    &mut self.world,
+                    WinEventKind::Resized {
+                        handle: WindowHandle::new(entity),
+                        size: inner_size,
+                    },
+                );
             }
             WindowEvent::Focused(focused) => {
                 if let Ok(mut e) = self.world.entity_mut(entity) {
                     let _ = e.insert_one(WinFocused(focused));
                 }
+                let _ = record_window_event(
+                    &mut self.world,
+                    WinEventKind::Focused {
+                        handle: WindowHandle::new(entity),
+                        focused,
+                    },
+                );
             }
             _ => {}
         }
@@ -231,7 +277,9 @@ mod tests {
         assert_eq!(desired[0].size.width, 640);
         assert_eq!(desired[0].size.height, 480);
 
-        world.despawn(entity).expect("despawn desired window entity");
+        world
+            .despawn(entity)
+            .expect("despawn desired window entity");
         assert!(collect_desired_windows(&mut world).is_empty());
     }
 

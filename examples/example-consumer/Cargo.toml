@@ -9,6 +9,6 @@ license.workspace = true
 env_logger = "0.11.8"
 log = "0.4.29"
 mimalloc = "0.1"
-awrk-example-model = { path = "../example-model" }
+awrk-example = { path = "../example" }
 awrk-world = { path = "../../crates/world" }
 awrk-world-ecs = { path = "../../crates/world-ecs" }

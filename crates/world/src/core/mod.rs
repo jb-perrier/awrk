@@ -3,5 +3,5 @@ mod process;
 mod type_registry;
 
 pub use process::{
-    Process, ProcessParts, Remotes, Rpcs, Sessions, World, WorldArgs, WorldEntityMut,
+    Process, ProcessParts, Resources, Rpcs, Sessions, World, WorldArgs, WorldEntityMut,
 };

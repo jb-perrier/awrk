@@ -17,7 +17,7 @@ pub struct ProcInfo {
     pub result: TypeKind,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TypeKind {
     Unit,
     Primitive {
@@ -38,21 +38,21 @@ pub enum TypeKind {
     },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EnumVariantInfo {
     pub index: u32,
     pub name: String,
     pub payload_type_name: Option<String>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FieldInfo {
     pub name: String,
     pub type_name: String,
     pub field_id: u64,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TupleItemInfo {
     pub index: u32,
     pub type_name: String,

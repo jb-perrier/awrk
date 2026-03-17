@@ -9,7 +9,7 @@ use awrk_world::rpc::{
     GetEntitiesResult, ListEntitiesResult, ListTypesResult, PatchComponentArgs, PollChangesArgs,
     PollChangesResult, RemoveComponentArgs, SetComponentArgs, SpawnArgs, SpawnResult,
 };
-use awrk_world::rpc::{RpcTrace, TypeCaps, WorldClient, WorldClientOptions};
+use awrk_world::rpc::{ProcessClient, ProcessClientOptions, RpcTrace, TypeCaps};
 use awrk_world_ecs::{Name, Parent};
 use std::{sync::mpsc, thread};
 
@@ -87,7 +87,7 @@ pub(crate) enum WorkerResponse {
 }
 
 struct WorkerState {
-    client: Option<WorldClient>,
+    client: Option<ProcessClient>,
     target: Option<Target>,
     schema: Option<OwnedSchema>,
     types: Option<Vec<TypeInfo>>,
@@ -135,7 +135,7 @@ impl WorkerState {
         &mut self,
         host: &str,
         port: u16,
-        opts: WorldClientOptions,
+        opts: ProcessClientOptions,
     ) -> Result<(), String> {
         let needs_reconnect = match &self.target {
             Some((h, p)) => h != host || *p != port,
@@ -148,7 +148,7 @@ impl WorkerState {
         }
 
         if self.client.is_none() {
-            self.client = Some(WorldClient::connect(host, port, opts)?);
+            self.client = Some(ProcessClient::connect(host, port, opts)?);
         }
 
         Ok(())
@@ -158,8 +158,8 @@ impl WorkerState {
         &mut self,
         host: &str,
         port: u16,
-        opts: WorldClientOptions,
-    ) -> Result<&mut WorldClient, String> {
+        opts: ProcessClientOptions,
+    ) -> Result<&mut ProcessClient, String> {
         self.ensure_client(host, port, opts)?;
         Ok(self.client.as_mut().expect("client is set"))
     }
@@ -217,7 +217,7 @@ pub(crate) fn start_worker() -> (mpsc::Sender<WorkerRequest>, mpsc::Receiver<Wor
 
     thread::spawn(move || {
         let mut state = WorkerState::new();
-        let opts = WorldClientOptions::default();
+        let opts = ProcessClientOptions::default();
 
         loop {
             let req = match req_rx.recv() {
@@ -472,7 +472,7 @@ fn refresh_all_wire(
     state: &mut WorkerState,
     host: &str,
     port: u16,
-    opts: WorldClientOptions,
+    opts: ProcessClientOptions,
     visible_entities: &[u64],
     expanded_entities: &[u64],
     selected_entity: Option<u64>,

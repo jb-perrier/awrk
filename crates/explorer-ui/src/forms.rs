@@ -2,7 +2,7 @@ use awrk_datex::value::Value;
 use awrk_datex_schema::PrimitiveKind;
 use eframe::egui;
 
-use crate::schema_types::TypeKind;
+use crate::schema_types::{TypeInfo, TypeKind};
 use crate::value_editor::{ValueEditorState, ui_value_editor};
 
 #[derive(Clone, Debug, Default)]
@@ -22,6 +22,8 @@ pub(crate) struct FieldState {
     pub(crate) text: String,
     pub(crate) bool_value: bool,
     pub(crate) value_state: ValueEditorState,
+    pub(crate) typed_kind: Option<TypeKind>,
+    pub(crate) typed_fields: std::collections::BTreeMap<String, FieldState>,
 }
 
 impl Default for FieldState {
@@ -31,6 +33,8 @@ impl Default for FieldState {
             text: String::new(),
             bool_value: false,
             value_state: ValueEditorState::null(),
+            typed_kind: None,
+            typed_fields: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -40,7 +44,11 @@ pub(crate) fn ui_field_editor(ui: &mut egui::Ui, label: &str, state: &mut FieldS
         ScalarType::Value => {
             ui.group(|ui| {
                 ui.label(label);
-                ui_value_editor(ui, "", &mut state.value_state);
+                if let Some(kind) = state.typed_kind.clone() {
+                    ui_typed_kind_editor(ui, &kind, &mut state.typed_fields);
+                } else {
+                    ui_value_editor(ui, "", &mut state.value_state);
+                }
             });
         }
         _ => {
@@ -61,6 +69,87 @@ pub(crate) fn ui_field_editor(ui: &mut egui::Ui, label: &str, state: &mut FieldS
             });
         }
     });
+}
+
+fn ui_typed_kind_editor(
+    ui: &mut egui::Ui,
+    kind: &TypeKind,
+    fields_state: &mut std::collections::BTreeMap<String, FieldState>,
+) {
+    match kind {
+        TypeKind::Unit => {
+            ui.label("<unit>");
+        }
+        TypeKind::Primitive { prim } => {
+            let scalar = scalar_type_for_primitive(*prim);
+            let entry = fields_state
+                .entry("value".to_string())
+                .or_insert_with(|| FieldState {
+                    scalar_type: scalar.clone(),
+                    ..Default::default()
+                });
+            entry.scalar_type = scalar;
+            ui_field_editor(ui, "Value", entry);
+        }
+        TypeKind::Struct { fields } => {
+            if fields.is_empty() {
+                ui.label("<empty struct>");
+                return;
+            }
+
+            for field in fields {
+                let entry = fields_state
+                    .entry(field.name.clone())
+                    .or_insert_with(|| FieldState {
+                        scalar_type: scalar_type_for_type_name(&field.type_name),
+                        ..Default::default()
+                    });
+                entry.scalar_type = scalar_type_for_type_name(&field.type_name);
+                ui_field_editor(ui, &field.name, entry);
+            }
+        }
+        TypeKind::Tuple { items } => {
+            if items.is_empty() {
+                ui.label("<empty tuple>");
+                return;
+            }
+
+            for item in items {
+                let key = item.index.to_string();
+                let entry = fields_state
+                    .entry(key.clone())
+                    .or_insert_with(|| FieldState {
+                        scalar_type: scalar_type_for_type_name(&item.type_name),
+                        ..Default::default()
+                    });
+                entry.scalar_type = scalar_type_for_type_name(&item.type_name);
+                ui_field_editor(ui, &format!("[{key}]"), entry);
+            }
+        }
+        TypeKind::Enum { .. } | TypeKind::Other { .. } => {
+            let entry = fields_state
+                .entry("value".to_string())
+                .or_insert_with(|| FieldState {
+                    scalar_type: ScalarType::Value,
+                    ..Default::default()
+                });
+            entry.scalar_type = ScalarType::Value;
+            entry.typed_kind = None;
+            ui_value_editor(ui, "Value", &mut entry.value_state);
+        }
+    }
+}
+
+pub(crate) fn structured_kind_for_type_name(types: &[TypeInfo], type_name: &str) -> Option<TypeKind> {
+    let inner = option_inner_type_name(type_name).unwrap_or_else(|| type_name.trim().to_string());
+
+    types
+        .iter()
+        .find(|ty| ty.type_name == inner)
+        .and_then(|ty| match &ty.kind {
+            TypeKind::Struct { .. } | TypeKind::Tuple { .. } => Some(ty.kind.clone()),
+            _ => None,
+        })
 }
 
 pub(crate) fn scalar_type_for_type_name(type_name: &str) -> ScalarType {
@@ -136,10 +225,13 @@ pub(crate) fn scalar_type_for_primitive(prim: PrimitiveKind) -> ScalarType {
 }
 
 pub(crate) fn seed_form_from_existing(
+    types: &[TypeInfo],
     kind: &TypeKind,
     existing: Option<&Value>,
     out: &mut std::collections::BTreeMap<String, FieldState>,
 ) {
+    out.clear();
+
     match kind {
         TypeKind::Unit => {}
         TypeKind::Primitive { prim } => {
@@ -148,9 +240,11 @@ pub(crate) fn seed_form_from_existing(
                 text: String::new(),
                 bool_value: false,
                 value_state: ValueEditorState::null(),
+                typed_kind: None,
+                typed_fields: std::collections::BTreeMap::new(),
             };
             if let Some(v) = existing {
-                fill_field_state_from_value(&mut state, v);
+                fill_field_state_from_value(types, &mut state, v);
             }
             out.insert("value".to_string(), state);
         }
@@ -162,9 +256,13 @@ pub(crate) fn seed_form_from_existing(
                     text: String::new(),
                     bool_value: false,
                     value_state: ValueEditorState::null(),
+                    typed_kind: structured_kind_for_type_name(types, &f.type_name),
+                    typed_fields: std::collections::BTreeMap::new(),
                 };
                 if let Some(v) = existing.and_then(|v| wire_map_get_u64_key(v, f.field_id)) {
-                    fill_field_state_from_value(&mut state, v);
+                    fill_field_state_from_value(types, &mut state, v);
+                } else if let Some(kind) = state.typed_kind.clone() {
+                    seed_form_from_existing(types, &kind, None, &mut state.typed_fields);
                 }
                 out.insert(f.name.clone(), state);
             }
@@ -178,13 +276,17 @@ pub(crate) fn seed_form_from_existing(
                     text: String::new(),
                     bool_value: false,
                     value_state: ValueEditorState::null(),
+                    typed_kind: structured_kind_for_type_name(types, &it.type_name),
+                    typed_fields: std::collections::BTreeMap::new(),
                 };
 
                 if let Some(val) = existing.and_then(|v| match v {
                     Value::Array(arr) => arr.get(it.index as usize),
                     _ => None,
                 }) {
-                    fill_field_state_from_value(&mut state, val);
+                    fill_field_state_from_value(types, &mut state, val);
+                } else if let Some(kind) = state.typed_kind.clone() {
+                    seed_form_from_existing(types, &kind, None, &mut state.typed_fields);
                 }
 
                 out.insert(key, state);
@@ -196,9 +298,11 @@ pub(crate) fn seed_form_from_existing(
                 text: String::new(),
                 bool_value: false,
                 value_state: ValueEditorState::null(),
+                typed_kind: None,
+                typed_fields: std::collections::BTreeMap::new(),
             };
             if let Some(v) = existing {
-                fill_field_state_from_value(&mut state, v);
+                fill_field_state_from_value(types, &mut state, v);
             }
             out.insert("value".to_string(), state);
         }
@@ -206,7 +310,7 @@ pub(crate) fn seed_form_from_existing(
     }
 }
 
-fn fill_field_state_from_value(state: &mut FieldState, v: &Value) {
+fn fill_field_state_from_value(types: &[TypeInfo], state: &mut FieldState, v: &Value) {
     match state.scalar_type {
         ScalarType::Bool => {
             if let Value::Bool(b) = v {
@@ -236,7 +340,12 @@ fn fill_field_state_from_value(state: &mut FieldState, v: &Value) {
             };
         }
         ScalarType::Value => {
-            state.value_state = ValueEditorState::from_value(v);
+            if let Some(kind) = state.typed_kind.clone() {
+                seed_form_from_existing(types, &kind, Some(v), &mut state.typed_fields);
+                state.value_state = ValueEditorState::null();
+            } else {
+                state.value_state = ValueEditorState::from_value(v);
+            }
         }
     }
 }
@@ -331,8 +440,12 @@ pub(crate) fn field_state_to_value(state: &FieldState) -> Result<Value, String> 
             Ok(Value::F64(v))
         }
         ScalarType::Value => {
-            let mut vs = state.value_state.clone();
-            vs.try_build_value()
+            if let Some(kind) = &state.typed_kind {
+                build_value_from_form(kind, &state.typed_fields)
+            } else {
+                let mut vs = state.value_state.clone();
+                vs.try_build_value()
+            }
         }
     }
 }

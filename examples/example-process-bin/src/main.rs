@@ -1,7 +1,7 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-use awrk_example_model::{
+use awrk_example::{
     ReferenceEntity, ReferenceHealth, ReferenceKind, ReferencePosition, ReferenceVelocity,
 };
 use awrk_world::core::{Process, ProcessParts, Rpcs, Sessions, World};
@@ -16,13 +16,15 @@ const MAX_PULSES: usize = 2;
 
 pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    let mut process = Process::from_args("example-process");
+    awrk_example_process::rpc::register(&mut process);
     let ProcessParts {
         name,
         mut world,
         mut rpcs,
         mut sessions,
         ..
-    } = Process::from_args("example-server").into_parts();
+    } = process.into_parts();
     sessions.start(&name)?;
     run(&mut world, &mut rpcs, &mut sessions);
     Ok(())
@@ -89,7 +91,7 @@ impl ExampleServerApp {
         );
 
         log::info!(
-            "example-server bootstrapped a sample world with entity/component data ready for mirroring"
+            "example-process bootstrapped a sample world with entity/component data ready for explicit domain RPCs"
         );
 
         Self {
@@ -181,7 +183,7 @@ impl ExampleServerApp {
     fn log_snapshot(&mut self, world: &mut World) {
         let snapshot = collect_example_snapshot(world);
         if snapshot != self.last_snapshot {
-            log::info!("example-server world snapshot:");
+            log::info!("example-process world snapshot:");
             for line in &snapshot {
                 log::info!("  {}", line);
             }

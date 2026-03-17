@@ -1,5 +1,5 @@
 [package]
-name = "awrk-win-api"
+name = "awrk-win"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

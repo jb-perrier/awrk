@@ -9,20 +9,19 @@ When making changes, optimize for:
 - small, explicit runtime behavior
 - focused diffs
 - clear `Result<_, String>` error propagation across RPC boundaries
-- keeping the RPC/wire format and bridge semantics stable unless a deliberate migration is being made
+- keeping the RPC/wire format stable unless a deliberate migration is being made
 
 ## Workspace layout
 - `crates/world`
-  - world runtime, TCP sessions, built-in RPCs, `Process`, `WorldClient`, `WorldBridge`
+  - world runtime, TCP sessions, built-in RPCs, `Process`, `ProcessClient`, typed resources, and explicit domain RPC registration hooks
   - key files:
     - `src/core/process.rs`
     - `src/rpc/builtins.rs`
     - `src/rpc/api.rs`
     - `src/rpc/client.rs`
     - `src/transport/session.rs`
-    - `src/bridge/mod.rs`
 - `crates/world-ecs`
-  - shared ECS-facing components such as `Name`, `Parent`, proxy metadata, and cross-world references
+  - shared ECS-facing components such as `Name` and `Parent`
 - `crates/datex/datex`
   - DATEX value encoding/decoding and patching
 - `crates/datex/rpc`
@@ -41,10 +40,10 @@ When making changes, optimize for:
   - small shared utilities such as semantic UUID support
 - `crates/explorer-ui`
   - egui client for browsing a remote world
-- `crates/win/api`, `crates/win/server`
+- `crates/win/shared`, `crates/win/process`, `crates/win/process-bin`
   - shared window-domain types plus a concrete server example
-- `examples/example-model`, `examples/example-server`, `examples/example-consumer`
-  - canonical examples showing a server world and a `WorldBridge`-based proxy consumer, including proxy-intent create/despawn flow
+- `examples/example`, `examples/example-process`, `examples/example-process-bin`, `examples/example-consumer`
+  - canonical examples showing a server world, explicit example-domain RPCs, and a typed client stored in `Process` resources
 
 ## Wire/runtime rules
 - Keep the transport **RPC-oriented and explicit**.
@@ -54,12 +53,13 @@ When making changes, optimize for:
 - Request/response failures should surface as RPC errors where possible instead of being hidden locally.
 
 ## Built-in world RPCs
-`Process::new` registers built-in procedures before discovered type/subscription registrations.
+`Process::new` registers built-in procedures before discovered type registrations.
 
 Current built-ins include:
 - introspection
   - `awrk.list_entities`
   - `awrk.list_types`
+  - `awrk.list_procedures`
   - `awrk.query_entities`
   - `awrk.get_entities`
 - mutations
@@ -80,31 +80,31 @@ If you add or change a built-in RPC:
 
 ## Type registration and macros
 - `#[Type]` generates DATEX/schema derives and auto-registers the type into `Process` via inventory.
-- Prefer using the existing registration flow rather than hand-rolling duplicate registries.
-- When working with bridge mirroring, remember that not every registered type is a component and not every component should be bridge-managed.
+- Shared domain crates should publish typed `Rpc<Args, Result>` constants.
+- Process crates should own `rpc::register(process)` and the server-side handler wiring.
+- Prefer the explicit domain registration flow rather than inventing duplicate registries.
+- Keep custom RPC handlers strict: `&mut World`, optional request object, and `Result<_, String>`.
 
 Macro split to keep in mind:
 - `awrk-macros`: `#[Type]`
 - `awrk-datex-macros`: DATEX encode/decode/patch derives
 - `awrk-schema-macros`: schema derives
 
-## World bridge expectations
-- `WorldBridge` mirrors remote entities into normal local ECS entities with proxy metadata.
-- Prefer transparent local reads of mirrored state.
-- Keep bridge-managed metadata explicit:
-  - `ProxyEntity`
-  - `ProxyState`
-  - `ProxyAuthority`
-  - `RemoteParentRef`
-- Avoid mixing bridge bookkeeping with domain components unless there is a clear reason.
-- If changing proxy semantics, also review:
-  - `crates/world/src/bridge/mod.rs`
-  - `docs/world-proxy-entities-architecture.md`
-  - the example crates under `examples/` as `example-model`, `example-server`, and `example-consumer`
+## Process and domain RPC expectations
+- `Process` hosts `World`, `Rpcs`, `Sessions`, and a typed `Resources` bag.
+- Prefer explicit domain RPCs for app-facing behavior.
+- Use `awrk.*` procedures for tooling, debugging, and low-level generic access.
+- When introducing a domain, use this crate naming split:
+  - `<crate_name>` for shared types, components, schemas, and typed RPC descriptors
+  - `<crate_name>-process` for `rpc::register(&mut Process)`, handlers, and process-side domain behavior
+  - `<crate_name>-process-bin` for the concrete executable wrapper
+- Serving binaries must explicitly call each domain process crate's `rpc::register(&mut Process)` during bootstrap before they accept traffic.
+- Typed domain client wrappers should usually live in their domain crates and be stored in `Process` resources.
+- Avoid duplicating transport logic when `ProcessClient` plus a thin typed wrapper is enough.
 
 ## Coding guidelines
 - Prefer small, direct abstractions over generic framework layers.
-- Prefer using existing helpers like `WorldClient`, `Process`, and `WorldBridge` instead of duplicating transport logic.
+- Prefer using existing helpers like `ProcessClient`, typed domain clients, and `Process` resources instead of duplicating transport logic.
 - Keep session loops predictable.
 - Avoid casual wire-format or schema changes.
 - Preserve current naming and code style.
@@ -122,7 +122,7 @@ Use small manual checks with separate terminals.
 
 ### Reference example
 1. Start the reference server:
-  - `cargo run -p awrk-example-server -- 7780`
+  - `cargo run -p awrk-example-process-bin -- 7780`
 2. Start the reference consumer:
   - `cargo run -p awrk-example-consumer`
 
@@ -132,8 +132,8 @@ Expected flow:
 
 This demonstrates:
 - world/entity exposure from a server
-- proxy mirroring through `WorldBridge`
-- local reads of mirrored entities/components
+- explicit domain RPCs through the example model
+- local client state driven by typed RPC calls
 
 ## Notes
 - Keep long-running servers in separate terminals or background tasks.

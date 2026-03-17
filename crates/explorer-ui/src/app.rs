@@ -1,6 +1,7 @@
 use crate::forms::{
     FieldState, ScalarType, build_value_from_form, field_state_to_value, scalar_type_for_primitive,
-    scalar_type_for_type_name, seed_form_from_existing, ui_field_editor,
+    scalar_type_for_type_name, seed_form_from_existing, structured_kind_for_type_name,
+    ui_field_editor,
 };
 use crate::model::{TreeData, build_tree};
 use crate::schema_types::{ProcInfo, TypeInfo, TypeKind};
@@ -99,7 +100,7 @@ impl Default for ExplorerUiApp {
             patch_field_selected: String::new(),
             patch_field_value: FieldState {
                 scalar_type: ScalarType::Value,
-                value_state: ValueEditorState::from_value(&Value::Null),
+                value_state: ValueEditorState::null(),
                 ..Default::default()
             },
 
@@ -445,6 +446,11 @@ impl ExplorerUiApp {
             state.value_state = ValueEditorState::null();
         }
 
+        if !matches!(scalar, ScalarType::Value) {
+            state.typed_kind = None;
+            state.typed_fields.clear();
+        }
+
         match scalar {
             ScalarType::I64 | ScalarType::U64 => {
                 if !is_optional && state.text.trim().is_empty() {
@@ -458,13 +464,27 @@ impl ExplorerUiApp {
             }
             ScalarType::Bool | ScalarType::String => {}
             ScalarType::Value => {
-                let should_seed = reset_values || matches!(state.value_state.kind, ValueKind::Null);
-                if should_seed {
-                    let dv = match value_type_name {
-                        Some(tn) => Self::default_value_for_type_name(types, tn),
-                        None => Value::Null,
-                    };
-                    state.value_state = ValueEditorState::from_value(&dv);
+                let next_typed_kind = value_type_name
+                    .and_then(|type_name| structured_kind_for_type_name(types, type_name));
+                let kind_changed = state.typed_kind.as_ref() != next_typed_kind.as_ref();
+
+                if kind_changed {
+                    state.typed_fields.clear();
+                }
+                state.typed_kind = next_typed_kind;
+
+                if let Some(kind) = state.typed_kind.clone() {
+                    let should_seed = reset_values || kind_changed || state.typed_fields.is_empty();
+                    if should_seed {
+                        seed_form_from_existing(types, &kind, None, &mut state.typed_fields);
+                    }
+                    state.value_state = ValueEditorState::null();
+                } else {
+                    let should_seed =
+                        reset_values || matches!(state.value_state.kind, ValueKind::Null);
+                    if should_seed {
+                        state.value_state = ValueEditorState::null();
+                    }
                 }
             }
         }
@@ -562,7 +582,7 @@ impl ExplorerUiApp {
                 });
             });
             ui.label(
-                "For bridge-managed workflows, inspect and edit command/status components such as WorldId, ProxyAuthority, ProxySpawnRequest, and ProxySpawnError on entities.",
+                "Inspect runtime entities/components here, and use explicit domain RPCs for app-facing workflows.",
             );
             ui.separator();
 
@@ -599,7 +619,7 @@ impl ExplorerUiApp {
 
             ui.label("Available low-level runtime/tooling procedures:");
             ui.label(
-                "Use these for inspection and debugging. App-facing flows should usually be modeled through entities, components, and bridge command/status markers instead of custom RPCs.",
+                "Use these for inspection and debugging. App-facing flows should usually be modeled through explicit domain RPCs instead of runtime-level entity mutation calls.",
             );
             egui::ScrollArea::vertical()
                 .max_height(200.0)
@@ -645,7 +665,12 @@ impl ExplorerUiApp {
             match selected_args_kind {
                 Some(TypeKind::Other { .. }) | None => {
                     ui.label("Args:");
-                    ui_value_editor(ui, "Args", &mut self.rpc_args_value);
+                    egui::ScrollArea::vertical()
+                        .id_salt("rpc_args_scroll")
+                        .max_height(ui.available_height().clamp(160.0, 320.0))
+                        .show(ui, |ui| {
+                            ui_value_editor(ui, "Args", &mut self.rpc_args_value);
+                        });
                 }
                 Some(
                     kind @ (TypeKind::Unit
@@ -660,78 +685,88 @@ impl ExplorerUiApp {
                     });
 
                     if self.rpc_use_raw_value {
-                        ui_value_editor(ui, "Args", &mut self.rpc_args_value);
+                        egui::ScrollArea::vertical()
+                            .id_salt("rpc_args_scroll")
+                            .max_height(ui.available_height().clamp(160.0, 320.0))
+                            .show(ui, |ui| {
+                                ui_value_editor(ui, "Args", &mut self.rpc_args_value);
+                            });
                     } else {
-                        if !self.rpc_form_error.is_empty() {
-                            ui.colored_label(egui::Color32::LIGHT_RED, &self.rpc_form_error);
-                        }
+                        egui::ScrollArea::vertical()
+                            .id_salt("rpc_args_scroll")
+                            .max_height(ui.available_height().clamp(160.0, 320.0))
+                            .show(ui, |ui| {
+                                if !self.rpc_form_error.is_empty() {
+                                    ui.colored_label(egui::Color32::LIGHT_RED, &self.rpc_form_error);
+                                }
 
-                        match &kind {
-                            TypeKind::Unit => {
-                                ui.label("<no args>");
-                            }
-                            TypeKind::Primitive { prim } => {
-                                let scalar = scalar_type_for_primitive(*prim);
-                                let entry = self
-                                    .rpc_form_fields
-                                    .entry("value".to_string())
-                                    .or_insert_with(|| FieldState {
-                                        scalar_type: scalar.clone(),
-                                        ..Default::default()
-                                    });
-                                entry.scalar_type = scalar;
-                                ui_field_editor(ui, "Value", entry);
-                            }
-                            TypeKind::Struct { fields } => {
-                                if fields.is_empty() {
-                                    ui.label("<empty struct>");
-                                } else {
-                                    for f in fields {
+                                match &kind {
+                                    TypeKind::Unit => {
+                                        ui.label("<no args>");
+                                    }
+                                    TypeKind::Primitive { prim } => {
+                                        let scalar = scalar_type_for_primitive(*prim);
                                         let entry = self
                                             .rpc_form_fields
-                                            .entry(f.name.clone())
+                                            .entry("value".to_string())
                                             .or_insert_with(|| FieldState {
-                                                scalar_type: scalar_type_for_type_name(
-                                                    &f.type_name,
-                                                ),
+                                                scalar_type: scalar.clone(),
                                                 ..Default::default()
                                             });
-                                        ui_field_editor(ui, &f.name, entry);
+                                        entry.scalar_type = scalar;
+                                        ui_field_editor(ui, "Value", entry);
                                     }
-                                }
-                            }
-                            TypeKind::Tuple { items } => {
-                                if items.is_empty() {
-                                    ui.label("<empty tuple>");
-                                } else {
-                                    for it in items {
-                                        let name = it.index.to_string();
+                                    TypeKind::Struct { fields } => {
+                                        if fields.is_empty() {
+                                            ui.label("<empty struct>");
+                                        } else {
+                                            for f in fields {
+                                                let entry = self
+                                                    .rpc_form_fields
+                                                    .entry(f.name.clone())
+                                                    .or_insert_with(|| FieldState {
+                                                        scalar_type: scalar_type_for_type_name(
+                                                            &f.type_name,
+                                                        ),
+                                                        ..Default::default()
+                                                    });
+                                                ui_field_editor(ui, &f.name, entry);
+                                            }
+                                        }
+                                    }
+                                    TypeKind::Tuple { items } => {
+                                        if items.is_empty() {
+                                            ui.label("<empty tuple>");
+                                        } else {
+                                            for it in items {
+                                                let name = it.index.to_string();
+                                                let entry = self
+                                                    .rpc_form_fields
+                                                    .entry(name.clone())
+                                                    .or_insert_with(|| FieldState {
+                                                        scalar_type: scalar_type_for_type_name(
+                                                            &it.type_name,
+                                                        ),
+                                                        ..Default::default()
+                                                    });
+                                                ui_field_editor(ui, &format!("[{name}]"), entry);
+                                            }
+                                        }
+                                    }
+                                    TypeKind::Enum { .. } => {
                                         let entry = self
                                             .rpc_form_fields
-                                            .entry(name.clone())
+                                            .entry("value".to_string())
                                             .or_insert_with(|| FieldState {
-                                                scalar_type: scalar_type_for_type_name(
-                                                    &it.type_name,
-                                                ),
+                                                scalar_type: ScalarType::Value,
                                                 ..Default::default()
                                             });
-                                        ui_field_editor(ui, &format!("[{name}]"), entry);
+                                        entry.scalar_type = ScalarType::Value;
+                                        ui_field_editor(ui, "Value", entry);
                                     }
+                                    TypeKind::Other { .. } => {}
                                 }
-                            }
-                            TypeKind::Enum { .. } => {
-                                let entry = self
-                                    .rpc_form_fields
-                                    .entry("value".to_string())
-                                    .or_insert_with(|| FieldState {
-                                        scalar_type: ScalarType::Value,
-                                        ..Default::default()
-                                    });
-                                entry.scalar_type = ScalarType::Value;
-                                ui_field_editor(ui, "Value", entry);
-                            }
-                            TypeKind::Other { .. } => {}
-                        }
+                            });
                     }
                 }
             }
@@ -1248,7 +1283,17 @@ impl ExplorerUiApp {
             .find(|f| f.name == self.patch_field_selected)
             .map(|f| f.type_name.as_str())
             .unwrap_or("json");
-        self.patch_field_value.scalar_type = scalar_type_for_type_name(field_type);
+        let (inner_type, is_optional) = Self::unwrap_option_type_name(field_type);
+        self.patch_field_value.scalar_type = scalar_type_for_type_name(inner_type);
+        let scalar = self.patch_field_value.scalar_type.clone();
+        Self::seed_field_state_defaults(
+            &self.types,
+            &mut self.patch_field_value,
+            scalar,
+            Some(inner_type),
+            is_optional,
+            false,
+        );
 
         ui_field_editor(ui, "Value", &mut self.patch_field_value);
     }
@@ -1774,7 +1819,12 @@ impl ExplorerUiApp {
             .and_then(|e| e.components.iter().find(|c| c.type_name == type_name))
             .and_then(|c| c.value.as_ref());
 
-        seed_form_from_existing(&kind, existing_value, &mut self.component_fields);
+        seed_form_from_existing(
+            &self.types,
+            &kind,
+            existing_value,
+            &mut self.component_fields,
+        );
 
         if let TypeKind::Struct { fields } = &kind
             && self.patch_field_selected.is_empty()

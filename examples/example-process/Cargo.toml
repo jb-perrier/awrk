@@ -1,0 +1,10 @@
+[package]
+name = "awrk-example-process"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+awrk-example = { path = "../example" }
+awrk-world = { path = "../../crates/world" }

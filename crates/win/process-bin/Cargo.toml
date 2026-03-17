@@ -1,5 +1,5 @@
 [package]
-name = "awrk-win-server"
+name = "awrk-win-process-bin"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -12,8 +12,5 @@ mimalloc = "0.1"
 winit = "0.30.0"
 awrk-world-ecs = { path = "../../world-ecs" }
 awrk-world = { path = "../../world" }
-awrk-win-api = { path = "../api" }
-awrk-datex = { path = "../../datex/datex" }
-awrk-datex-macros = { path = "../../datex/macros" }
-awrk-datex-schema = { path = "../../schema/schema" }
-awrk-schema-macros = { path = "../../schema/macros" }
+awrk-win = { path = "../shared" }
+awrk-win-process = { path = "../process" }

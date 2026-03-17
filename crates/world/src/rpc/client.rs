@@ -1,6 +1,6 @@
 use crate::rpc::{
-    GetEntitiesArgs, GetEntitiesResult, ListEntitiesResult, ListTypesResult, PollChangesArgs,
-    PollChangesResult, QueryEntitiesArgs, QueryEntitiesResult,
+    GetEntitiesArgs, GetEntitiesResult, ListEntitiesResult, ListProceduresResult, ListTypesResult,
+    PollChangesArgs, PollChangesResult, QueryEntitiesArgs, QueryEntitiesResult,
 };
 use crate::transport::WORLD_MAX_FRAME_SIZE;
 use awrk_datex::codec::decode::DecodeConfig;
@@ -8,6 +8,7 @@ use awrk_datex::{Decode, Encode};
 use awrk_datex_rpc::{RpcEnvelopeRef, RpcProcId, decode_envelope, encode_invoke};
 use std::fmt;
 use std::io::{Read, Write};
+use std::marker::PhantomData;
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::{Duration, Instant};
 
@@ -24,14 +25,33 @@ pub struct RpcTrace {
     pub error: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Rpc<A, R> {
+    name: &'static str,
+    marker: PhantomData<fn(A) -> R>,
+}
+
+impl<A, R> Rpc<A, R> {
+    pub const fn new(name: &'static str) -> Self {
+        Self {
+            name,
+            marker: PhantomData,
+        }
+    }
+
+    pub const fn name(&self) -> &'static str {
+        self.name
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
-pub struct WorldClientOptions {
+pub struct ProcessClientOptions {
     pub connect_timeout: Duration,
     pub io_timeout: Duration,
     pub nodelay: bool,
 }
 
-impl Default for WorldClientOptions {
+impl Default for ProcessClientOptions {
     fn default() -> Self {
         Self {
             connect_timeout: Duration::from_millis(500),
@@ -42,19 +62,19 @@ impl Default for WorldClientOptions {
 }
 
 #[derive(Debug)]
-pub enum WorldClientError {
+pub enum ProcessClientError {
     Transport(String),
     Protocol(String),
     Rpc(String),
 }
 
-impl WorldClientError {
+impl ProcessClientError {
     pub fn is_transport(&self) -> bool {
         matches!(self, Self::Transport(_))
     }
 }
 
-impl fmt::Display for WorldClientError {
+impl fmt::Display for ProcessClientError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Transport(s) => write!(f, "transport error: {s}"),
@@ -64,19 +84,19 @@ impl fmt::Display for WorldClientError {
     }
 }
 
-impl std::error::Error for WorldClientError {}
+impl std::error::Error for ProcessClientError {}
 
-pub struct WorldClient {
+pub struct ProcessClient {
     stream: TcpStream,
     next_id: u64,
     host: String,
     port: u16,
-    opts: WorldClientOptions,
+    opts: ProcessClientOptions,
     traces: Vec<RpcTrace>,
 }
 
-impl WorldClient {
-    pub fn connect(host: &str, port: u16, opts: WorldClientOptions) -> Result<Self, String> {
+impl ProcessClient {
+    pub fn connect(host: &str, port: u16, opts: ProcessClientOptions) -> Result<Self, String> {
         let addrs = (host, port)
             .to_socket_addrs()
             .map_err(|e| e.to_string())?
@@ -127,29 +147,33 @@ impl WorldClient {
         &self.traces
     }
 
-    pub fn get_schema_bytes(&mut self) -> Result<Vec<u8>, WorldClientError> {
+    pub fn get_schema_bytes(&mut self) -> Result<Vec<u8>, ProcessClientError> {
         self.invoke_typed::<(), Vec<u8>>("awrk.get_schema", ())
     }
 
-    pub fn list_types(&mut self) -> Result<ListTypesResult, WorldClientError> {
+    pub fn list_types(&mut self) -> Result<ListTypesResult, ProcessClientError> {
         self.invoke_typed::<(), ListTypesResult>("awrk.list_types", ())
     }
 
-    pub fn list_entities(&mut self) -> Result<ListEntitiesResult, WorldClientError> {
+    pub fn list_procedures(&mut self) -> Result<ListProceduresResult, ProcessClientError> {
+        self.invoke_typed::<(), ListProceduresResult>("awrk.list_procedures", ())
+    }
+
+    pub fn list_entities(&mut self) -> Result<ListEntitiesResult, ProcessClientError> {
         self.invoke_typed::<(), ListEntitiesResult>("awrk.list_entities", ())
     }
 
     pub fn query_entities(
         &mut self,
         args: QueryEntitiesArgs,
-    ) -> Result<QueryEntitiesResult, WorldClientError> {
+    ) -> Result<QueryEntitiesResult, ProcessClientError> {
         self.invoke_typed::<QueryEntitiesArgs, QueryEntitiesResult>("awrk.query_entities", args)
     }
 
     pub fn get_entities(
         &mut self,
         entities: Vec<u64>,
-    ) -> Result<GetEntitiesResult, WorldClientError> {
+    ) -> Result<GetEntitiesResult, ProcessClientError> {
         self.invoke_typed::<GetEntitiesArgs, GetEntitiesResult>(
             "awrk.get_entities",
             GetEntitiesArgs { entities },
@@ -160,7 +184,7 @@ impl WorldClient {
         &mut self,
         since: u64,
         limit: Option<u32>,
-    ) -> Result<PollChangesResult, WorldClientError> {
+    ) -> Result<PollChangesResult, ProcessClientError> {
         self.invoke_typed::<PollChangesArgs, PollChangesResult>(
             "awrk.poll_changes",
             PollChangesArgs { since, limit },
@@ -171,7 +195,7 @@ impl WorldClient {
         &mut self,
         proc: &str,
         args: awrk_datex::value::Value,
-    ) -> Result<awrk_datex::value::Value, WorldClientError> {
+    ) -> Result<awrk_datex::value::Value, ProcessClientError> {
         let start = Instant::now();
         let id = self.next_message_id();
 
@@ -188,7 +212,7 @@ impl WorldClient {
                 ok: false,
                 error: Some(format!("protocol error: {e}")),
             });
-            WorldClientError::Protocol(e.to_string())
+            ProcessClientError::Protocol(e.to_string())
         })?;
 
         let request_bytes = (4 + payload.len()) as u64;
@@ -208,7 +232,7 @@ impl WorldClient {
                             ok: false,
                             error: Some(format!("transport error: {e}")),
                         });
-                        WorldClientError::Transport(e.to_string())
+                        ProcessClientError::Transport(e.to_string())
                     })?;
                 } else {
                     self.traces.push(RpcTrace {
@@ -222,7 +246,7 @@ impl WorldClient {
                         ok: false,
                         error: Some(format!("transport error: {e}")),
                     });
-                    return Err(WorldClientError::Transport(e.to_string()));
+                    return Err(ProcessClientError::Transport(e.to_string()));
                 }
             } else {
                 self.traces.push(RpcTrace {
@@ -236,7 +260,7 @@ impl WorldClient {
                     ok: false,
                     error: Some(format!("transport error: {e}")),
                 });
-                return Err(WorldClientError::Transport(e.to_string()));
+                return Err(ProcessClientError::Transport(e.to_string()));
             }
         }
 
@@ -257,7 +281,7 @@ impl WorldClient {
                     ok: false,
                     error: Some(format!("transport error: {e}")),
                 });
-                return Err(WorldClientError::Transport(e.to_string()));
+                return Err(ProcessClientError::Transport(e.to_string()));
             }
         };
 
@@ -276,7 +300,7 @@ impl WorldClient {
                 ok: false,
                 error: Some(format!("protocol error: {e}")),
             });
-            WorldClientError::Protocol(e.to_string())
+            ProcessClientError::Protocol(e.to_string())
         })?;
         let response_decode_us = Some(decode_start.elapsed().as_micros() as u64);
 
@@ -301,7 +325,7 @@ impl WorldClient {
                         ok: false,
                         error: Some(format!("protocol error: {err}")),
                     });
-                    return Err(WorldClientError::Protocol(err));
+                    return Err(ProcessClientError::Protocol(err));
                 }
 
                 if ok {
@@ -318,7 +342,7 @@ impl WorldClient {
                             ok: false,
                             error: Some(format!("protocol error: {err}")),
                         });
-                        WorldClientError::Protocol(err)
+                        ProcessClientError::Protocol(err)
                     })?;
                     self.traces.push(RpcTrace {
                         at: Instant::now(),
@@ -334,7 +358,7 @@ impl WorldClient {
                     Ok(v)
                 } else {
                     let msg = String::wire_decode(value)
-                        .map_err(|e| WorldClientError::Protocol(e.to_string()))?;
+                        .map_err(|e| ProcessClientError::Protocol(e.to_string()))?;
                     self.traces.push(RpcTrace {
                         at: Instant::now(),
                         id,
@@ -346,7 +370,7 @@ impl WorldClient {
                         ok: false,
                         error: Some(msg.clone()),
                     });
-                    Err(WorldClientError::Rpc(msg))
+                    Err(ProcessClientError::Rpc(msg))
                 }
             }
             RpcEnvelopeRef::Invoke { .. } => {
@@ -362,12 +386,12 @@ impl WorldClient {
                     ok: false,
                     error: Some(format!("protocol error: {err}")),
                 });
-                Err(WorldClientError::Protocol(err))
+                Err(ProcessClientError::Protocol(err))
             }
         }
     }
 
-    pub fn invoke_typed<A, R>(&mut self, proc: &str, args: A) -> Result<R, WorldClientError>
+    pub fn invoke_typed<A, R>(&mut self, proc: &str, args: A) -> Result<R, ProcessClientError>
     where
         A: Encode,
         for<'a> R: Decode<'a>,
@@ -375,6 +399,14 @@ impl WorldClient {
         let args_value = encode_typed_to_value(&args)?;
         let v = self.invoke_value(proc, args_value)?;
         decode_typed_from_value::<R>(&v)
+    }
+
+    pub fn invoke<A, R>(&mut self, rpc: Rpc<A, R>, args: A) -> Result<R, ProcessClientError>
+    where
+        A: Encode,
+        for<'a> R: Decode<'a>,
+    {
+        self.invoke_typed(rpc.name(), args)
     }
 
     fn next_message_id(&mut self) -> u64 {
@@ -394,29 +426,29 @@ fn proc_id_for_name(name: &str) -> u64 {
 
 fn encode_typed_to_value<A: Encode>(
     args: &A,
-) -> Result<awrk_datex::value::Value, WorldClientError> {
+) -> Result<awrk_datex::value::Value, ProcessClientError> {
     let mut enc = awrk_datex::codec::encode::Encoder::default();
     args.wire_encode(&mut enc)
-        .map_err(|e| WorldClientError::Protocol(e.to_string()))?;
+        .map_err(|e| ProcessClientError::Protocol(e.to_string()))?;
     let buf = enc.into_inner();
     let value_ref = awrk_datex::codec::decode::decode_value_full(&buf, DecodeConfig::default())
-        .map_err(|e| WorldClientError::Protocol(e.to_string()))?;
+        .map_err(|e| ProcessClientError::Protocol(e.to_string()))?;
     awrk_datex::value::Value::wire_decode(value_ref)
-        .map_err(|e| WorldClientError::Protocol(e.to_string()))
+        .map_err(|e| ProcessClientError::Protocol(e.to_string()))
 }
 
-fn decode_typed_from_value<R>(value: &awrk_datex::value::Value) -> Result<R, WorldClientError>
+fn decode_typed_from_value<R>(value: &awrk_datex::value::Value) -> Result<R, ProcessClientError>
 where
     for<'de> R: Decode<'de>,
 {
     let mut enc = awrk_datex::codec::encode::Encoder::default();
     value
         .wire_encode(&mut enc)
-        .map_err(|e| WorldClientError::Protocol(e.to_string()))?;
+        .map_err(|e| ProcessClientError::Protocol(e.to_string()))?;
     let buf = enc.into_inner();
     let value_ref = awrk_datex::codec::decode::decode_value_full(&buf, DecodeConfig::default())
-        .map_err(|e| WorldClientError::Protocol(e.to_string()))?;
-    R::wire_decode(value_ref).map_err(|e| WorldClientError::Protocol(e.to_string()))
+        .map_err(|e| ProcessClientError::Protocol(e.to_string()))?;
+    R::wire_decode(value_ref).map_err(|e| ProcessClientError::Protocol(e.to_string()))
 }
 
 fn is_reconnectable_io_error(e: &std::io::Error) -> bool {

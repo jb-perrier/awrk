@@ -57,6 +57,7 @@ impl ValueKind {
 #[derive(Clone, Debug)]
 pub(crate) struct ValueEditorState {
     pub(crate) kind: ValueKind,
+    pub(crate) explicit_kind: bool,
     pub(crate) bool_value: bool,
     pub(crate) text: String,
     pub(crate) items: Vec<ValueEditorState>,
@@ -74,6 +75,7 @@ impl ValueEditorState {
     pub(crate) fn null() -> Self {
         Self {
             kind: ValueKind::Null,
+            explicit_kind: false,
             bool_value: false,
             text: String::new(),
             items: Vec::new(),
@@ -83,7 +85,7 @@ impl ValueEditorState {
     }
 
     pub(crate) fn from_value(v: &Value) -> Self {
-        match v {
+        let mut state = match v {
             Value::Null => Self::null(),
             Value::Unit => Self {
                 kind: ValueKind::Unit,
@@ -137,12 +139,15 @@ impl ValueEditorState {
                     .collect(),
                 ..Self::null()
             },
-        }
+        };
+        state.explicit_kind = true;
+        state
     }
 
     fn num(kind: ValueKind, text: String) -> Self {
         Self {
             kind,
+            explicit_kind: true,
             text,
             ..Self::null()
         }
@@ -199,13 +204,25 @@ pub(crate) fn ui_value_editor(ui: &mut egui::Ui, label: &str, state: &mut ValueE
         ui.horizontal(|ui| {
             ui.label(label);
             egui::ComboBox::from_id_salt(label)
-                .selected_text(state.kind.label())
+                .selected_text(if state.explicit_kind {
+                    state.kind.label()
+                } else {
+                    ""
+                })
                 .show_ui(ui, |ui| {
                     for kind in ALL_KINDS {
-                        ui.selectable_value(&mut state.kind, kind, kind.label());
+                        let selected = state.explicit_kind && state.kind == kind;
+                        if ui.selectable_label(selected, kind.label()).clicked() {
+                            state.kind = kind;
+                            state.explicit_kind = true;
+                        }
                     }
                 });
         });
+
+        if !state.explicit_kind {
+            return;
+        }
 
         match state.kind {
             ValueKind::Null | ValueKind::Unit => {}

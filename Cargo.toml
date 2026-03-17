@@ -11,12 +11,14 @@ members = [
     "crates/world-ecs",
     "crates/core",
     "crates/explorer-ui",
-    "examples/example-model",
-    "examples/example-server",
+    "examples/example",
+    "examples/example-process",
+    "examples/example-process-bin",
     "examples/example-consumer",
     "crates/macros",
-    "crates/win/api",
-    "crates/win/server",
+    "crates/win/shared",
+    "crates/win/process",
+    "crates/win/process-bin",
 ]
 
 [workspace.package]

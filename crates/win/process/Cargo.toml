@@ -1,0 +1,10 @@
+[package]
+name = "awrk-win-process"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+awrk-win = { path = "../shared" }
+awrk-world = { path = "../../world" }

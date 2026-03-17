@@ -1,5 +1,5 @@
 [package]
-name = "awrk-example-server"
+name = "awrk-example-process-bin"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -9,6 +9,7 @@ license.workspace = true
 env_logger = "0.11.8"
 log = "0.4.29"
 mimalloc = "0.1"
-awrk-example-model = { path = "../example-model" }
+awrk-example = { path = "../example" }
+awrk-example-process = { path = "../example-process" }
 awrk-world = { path = "../../crates/world" }
 awrk-world-ecs = { path = "../../crates/world-ecs" }
